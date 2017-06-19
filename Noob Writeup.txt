@@ -1,0 +1,20 @@
+Fd
+
+int fd = atoi( argv[1] ) - 0x1234;
+int len = 0;
+len = read(fd, buf, 32);
+if(!strcmp("LETMEWIN\n", buf)){
+	printf("good job :)\n");
+	system("/bin/cat flag");
+	exit(0);
+}
+
+This is the important part of the code. On first glance, the obvious thing to manipulate is the fd variable, which can be controlled with input. Then you can use the fd in the read method. But how is that relevant? That requires reading up a little more, but basically if fd is 0, then read takes in input from stdin. 
+
+Since fd is subtracted 0x1234 (or 4660), in order to make fd 0, input a 4660.
+
+That doesn't get you the flag, though - the strcmp function checks if buf (or now your input) is equal to LETMEWIN\n, so just type that into the terminal and you should get your flag.
+
+Solution:
+4660
+LETMEWIN\n
