@@ -752,3 +752,98 @@ Tips I learned: set print asm-demangle on (C++, makes things legible)
                 (readelf -a uaf | grep Man | c++filt in this case)
                 scp -P2222 uaf@pwnable.kr:uaf /root/Downloads to copy from pwnable.kr
 
+
+-----------------------------------------
+codemap
+
+You need IDA Pro codemap. I'll come back when I have it. or not...
+
+
+
+-----------------------------------------
+memcpy
+
+So, for this particular challenge, I had no idea what to do, so I just bruteforced it with a script. Luckily enough, it didn't take much to bruteforce. As for my script, I wrote a really lazy version where I initially started out with an array like:
+[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
+and I would increment a certain position depending on the program output.
+
+For example, if the output stopped on experiment 5, that most likely meant the value in input[3] was off. So I had a loop (it's in memcpy.py, a very lazily written script) that kept incrementing input[3] until I got the text output for experiment 6 (or at least part of it). That means the value in input[4] was off. So I continued on and on until I got the flag.
+
+flag : 1_w4nn4_br34K_th3_m3m0ry_4lignm3nt
+(just because I really don't want to brute force it again)
+
+Solution:
+python memcpy.py
+(then edit script as necessary)
+
+-----------------------------------------
+asm
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <seccomp.h>
+#include <sys/prctl.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#define LENGTH 128
+
+void sandbox(){
+   scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_KILL);
+   if (ctx == NULL) {
+      printf("seccomp error\n");
+      exit(0);
+   }
+
+   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(open), 0);
+   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(read), 0);
+   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(write), 0);
+   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(exit), 0);
+   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(exit_group), 0);
+
+   if (seccomp_load(ctx) < 0){
+      seccomp_release(ctx);
+      printf("seccomp error\n");
+      exit(0);
+   }
+   seccomp_release(ctx);
+}
+
+char stub[] = "\x48\x31\xc0\x48\x31\xdb\x48\x31\xc9\x48\x31\xd2\x48\x31\xf6\x48\x31\xff\x48\x31\xed\x4d\x31\xc0\x4d\x31\xc9\x4d\x31\xd2\x4d\x31\xdb\x4d\x31\xe4\x4d\x31\xed\x4d\x31\xf6\x4d\x31\xff";
+unsigned char filter[256];
+int main(int argc, char* argv[]){
+
+   setvbuf(stdout, 0, _IONBF, 0);
+   setvbuf(stdin, 0, _IOLBF, 0);
+
+   printf("Welcome to shellcoding practice challenge.\n");
+   printf("In this challenge, you can run your x64 shellcode under SECCOMP sandbox.\n");
+   printf("Try to make shellcode that spits flag using open()/read()/write() systemcalls only.\n");
+   printf("If this does not challenge you. you should play 'asg' challenge :)\n");
+
+   char* sh = (char*)mmap(0x41414000, 0x1000, 7, MAP_ANONYMOUS | MAP_FIXED | MAP_PRIVATE, 0, 0);
+   memset(sh, 0x90, 0x1000);
+   memcpy(sh, stub, strlen(stub));
+   
+   int offset = sizeof(stub);
+   printf("give me your x64 shellcode: ");
+   read(0, sh+offset, 1000);
+
+   alarm(10);
+   chroot("/home/asm_pwn");   // you are in chroot jail. so you can't use symlink in /tmp
+   sandbox();
+   ((void (*)(void))sh)();
+   return 0;
+}
+
+ 7ad: e8 8e fe ff ff          callq  640 <fopen@plt>
+ 7b2: 48 89 45 f8             mov    %rax,-0x8(%rbp)
+mov    -0xc(%rbp),%eax
+ 7c2: 89 c7                   mov    %eax,%edi
+ 7c4: e8 47 fe ff ff          callq  610 <putchar@plt>
+ 7c9: 48 8b 45 f8             mov    -0x8(%rbp),%rax
+ 7cd: 48 89 c7                mov    %rax,%rdi
+ 7d0: e8 5b fe ff ff          callq  630 <_IO_getc@plt>
+ 7d5: 89 45 f4                mov    %eax,-0xc(%rbp)
